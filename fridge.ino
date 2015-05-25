@@ -1,7 +1,7 @@
 #define SERIAL_OUTPUT false
 
 // ========================
-// THERMOMETER / HYGROMETER
+// THERMOMETER / HYDROMETER
 // ========================
 #include "DHT.h"
 
@@ -131,12 +131,18 @@ void loop () {
     turnOff(RELAY_FRIDGE);
   }
 
- if (logData.humidity < 60.0) {
+ if (logData.humidity < 50.0) {
     turnOn(RELAY_HUMIDIFIER);
   }
 
-  if (logData.humidity > 70.0) {
+  if (logData.humidity > 60.0) {
     turnOff(RELAY_HUMIDIFIER);
+  }
+  
+  if (logData.humidity > 80.0) {
+    turnOn(RELAY_FAN);
+  } else {
+    turnOff(RELAY_FAN);
   }
 
   logData.statusFridge = digitalRead(RELAY_FRIDGE) == LOW;
@@ -159,9 +165,28 @@ void loop () {
   // to keep the network alive by sleeping shortly, and checking for packets, this way the
   // network stays alive
   int sleepInSeconds = 30;
+  
   for (int i = 0; i < sleepInSeconds*4; i++) {
-      ether.packetLoop(ether.packetReceive());
-      delay(250);
+    ether.packetLoop(ether.packetReceive());
+    delay(250);
+
+    if (logData.statusFan == true) {
+      // If we have a high humidity and the fan is already on, keep the fan on for 30 seconds, to try to get the humidity down
+    } else {
+      // If we have a proper humidity, turn the fan on for 1 second every 15 seconds to ensure we have some airflow
+      switch(i) {
+        case 0: // 0 seconds
+        case 15*4: // 15 seconds
+          turnOn(RELAY_FAN);
+          break;
+        
+        case 4: // 1 second
+        case 16*4: // 16 second
+          // turn the fan on for 1 second every 15 seconds
+          turnOff(RELAY_FAN);
+          break;
+      }
+    }
   }
 }
 
