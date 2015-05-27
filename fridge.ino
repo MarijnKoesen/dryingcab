@@ -1,9 +1,38 @@
-#define SERIAL_OUTPUT false
+// Drying cabinet v1.2
+// 
+// My arduino drying / controlled environment cabinet. This software uses 
+// as Arduino (nano in my case) in combination with a DHT22, 4 way relay
+// and a Enc28J60 network (UTP) adapter to created a connected fridge
+// which keeps the temperature and humidity levels stable between the 
+// configured thresholds.
+//
+// Connection instructions:
+// - Connect DHT22 data to pin 4 (see #define DHTPIN)
+// - Connect the relay for the fridge to pin RELAY_FRIDGE (6)
+// - Connect the relay for the humidifier to pin RELAY_HUMIDIFIER (7)
+// - Connect the relay for the fan to pin RELAY_FAN (8)
+// - Connect the relay for the heater (black lamp) to pin RELAY_HEATER (9)
+
+
+// TODO discuss challenges and problems:
+// - Ethernet driver was unstable (after some time it would just not send anything anymore)
+// -- Tried multiple things, like resetting using 2 methods (watchdog and reset function at address 0) both didn't work/help
+// - Than decided to use UIPEthernet instead
+// - But UIPEthernet was unstable as well, first test it stopped sending anything after 3 hours
+// -- Now not using DNS anymore in the connect, instead using IP
+// -- Added the Enc28J60.init(mymac) to see if that helps
+// -- Using the errate_12 branch (27-5-2015) as that patch is not in master yet and might fix it:
+//    http://forum.mysensors.org/topic/536/problems-with-enc28j60-losing-connection-freezing-using-uipethernet-or-ethershield-read-this/36
+// 
+
+// Enable the DEBUG define if you want to use the serial output
+//#define DEBUG
 
 // ========================
 // THERMOMETER / HYDROMETER
 // ========================
 #include "DHT.h"
+
 
 #define DHTPIN 4       // what pin we're connected to
 #define DHTTYPE DHT22   // DHT11 or DHT22
@@ -49,27 +78,20 @@ struct LogData logData, emptyLogData;
 // LAN
 // ========================
 
-#include <EtherCard.h>
+#include <UIPEthernet.h>
 
 // ethernet interface mac address, must be unique on the LAN
 static byte mymac[] = { 0x74,0x69,0x69,0x2D,0x30,0x31 };
 
-byte Ethernet::buffer[700];
-static uint32_t timer;
-static byte session;
-int res = 0;
-Stash stash;
-const char website[] PROGMEM = "droogkast.pruts0r.nl";
-
-#define LAN_PIN_CS 10
-
+EthernetClient client;
+IPAddress server = IPAddress(192,168,1,3);
 
 
 
 void setup () {
-  if (SERIAL_OUTPUT) {
-     Serial.begin(115200);
-  }
+  #ifdef DEBUG
+  Serial.begin(115200);
+  #endif
 
   // Make sure we are connected... digital!
   connectLanWithDhcp();
@@ -135,11 +157,11 @@ void loop () {
     turnOn(RELAY_HUMIDIFIER);
   }
 
-  if (logData.humidity > 60.0) {
+  if (logData.humidity > 60) {
     turnOff(RELAY_HUMIDIFIER);
   }
   
-  if (logData.humidity > 80.0) {
+  if (logData.humidity > 75.0) {
     turnOn(RELAY_FAN);
   } else {
     turnOff(RELAY_FAN);
@@ -152,22 +174,21 @@ void loop () {
 
   sendLogData();
   
-  if (SERIAL_OUTPUT) {
-     Serial.print("Temp: ");
-     Serial.println(logData.fridgeTemperature);
-     Serial.print("Humidity: ");
-     Serial.println(logData.humidity);  
-  }
+#ifdef DEBUG
+  Serial.print(F("Temp: "));
+  Serial.println(logData.fridgeTemperature);
+  Serial.print(F("Humidity: "));
+  Serial.println(logData.humidity);  
+#endif
   
   // Wait for 30 seconds, and check again so that we don't turn on/off the fridge constantly
   //
   // But if we'd delay(30000) our network connection would get closed/fucked up, so we need
   // to keep the network alive by sleeping shortly, and checking for packets, this way the
   // network stays alive
-  int sleepInSeconds = 30;
+  int sleepInSeconds = 15;
   
   for (int i = 0; i < sleepInSeconds*4; i++) {
-    ether.packetLoop(ether.packetReceive());
     delay(250);
 
     if (logData.statusFan == true) {
@@ -176,12 +197,10 @@ void loop () {
       // If we have a proper humidity, turn the fan on for 1 second every 15 seconds to ensure we have some airflow
       switch(i) {
         case 0: // 0 seconds
-        case 15*4: // 15 seconds
           turnOn(RELAY_FAN);
           break;
         
         case 4: // 1 second
-        case 16*4: // 16 second
           // turn the fan on for 1 second every 15 seconds
           turnOff(RELAY_FAN);
           break;
@@ -190,86 +209,66 @@ void loop () {
   }
 }
 
-void sendLogData() {  
-  /*
-  //Hack to avoid RAM memory freeze
-  if (stash.freeCount() <= 40) {
-    Stash::initMap(56);
-  }
-  */
-  // Cleanup to avoid the stash to become fucked up: https://github.com/jcw/ethercard/issues/18  
-  stash.cleanup();
-    
+void sendLogData() {      
   // generate two fake values as payload - by using a separate stash,
   // we can determine the size of the generated message ahead of time
-  byte sd = stash.create();
+  #ifdef DEBUG
+  Serial.println(F("GO"));
+  #endif
   
-  stash.print(F("temperature="));
-  stash.print(logData.fridgeTemperature);
+  if (client.connect(server, 80)) {
+    client.print(F("GET /push-status.php?"));
+    
+    client.print(F("temperature="));
+    client.print(logData.fridgeTemperature);
   
-  stash.print(F("&humidity="));
-  stash.print(logData.humidity);
+    client.print(F("&humidity="));
+    client.print(logData.humidity);
   
-  stash.print(F("&status_fridge="));    
-  stash.print(logData.statusFridge == 1 ? "1" : "0");
+    client.print(F("&status_fridge="));    
+    client.print(logData.statusFridge == 1 ? F("1") : F("0"));
 
-  stash.print(F("&status_humidifier="));    
-  stash.print(logData.statusHumidifier == 1 ? "1" : "0");
+    client.print(F("&status_humidifier="));    
+    client.print(logData.statusHumidifier == 1 ? F("1") : F("0"));
 
-  stash.print(F("&status_fan="));    
-  stash.print(logData.statusFan == 1 ? "1" : "0");
+    client.print(F("&status_fan="));    
+    client.print(logData.statusFan == 1 ? F("1") : F("0"));
 
-  stash.print(F("&status_heater="));    
-  stash.print(logData.statusHeater == 1 ? "1" : "0");    
-  stash.save();
-
-  // generate the header with payload - note that the stash size is used,
-  // and that a "stash descriptor" is passed in as argument using "$H"
-  Stash::prepare(PSTR("GET http://$F/push-status.php?$H HTTP/1.1" "\r\n"
-    "Host: $F" "\r\n"
-    "\r\n" "\n"
-    ),
-  website, sd, website);
-
-  // send the packet - this also releases all stash buffers once done
-  session = ether.tcpSend(); 
-
-  const char* reply = ether.tcpReply(session);
+    client.print(F("&status_heater="));    
+    client.print(logData.statusHeater == 1 ? F("1") : F("0"));    
  
-  if (reply != 0) {
-     res = 0;
-
-     if (SERIAL_OUTPUT) {
-        Serial.println(reply);
-     }
+    client.print(F(" HTTP/1.1\n"));
+  
+    client.print(F("HOST: droogkast.pruts0r.nl\n\n"));
+    client.stop();
+  } else {
+    #ifdef DEBUG
+    Serial.println(F("ERROR: Cannot connect to server to push status! Restarting the Enc28J60.."));
+    #endif
+    
+    // Try to re-init our network module if it fails, next time round it should be fine again...
+    // Found: http://www.tweaking4all.com/hardware/arduino/arduino-enc28j60-ethernet/
+    Enc28J60.init(mymac);
   }
 }
 
 
 void connectLanWithDhcp() {
-  if (SERIAL_OUTPUT) {
-     Serial.println(F("\n[webClient]"));
-  }
+#ifdef DEBUG
+  Serial.println(F("Starting network connection..."));  
+#endif
 
-  if (ether.begin(sizeof Ethernet::buffer, mymac, LAN_PIN_CS) == 0) 
-    if (SERIAL_OUTPUT) {
-      Serial.println(F("Failed to access Ethernet controller"));
-    }
-  if (!ether.dhcpSetup()) {
-    if (SERIAL_OUTPUT) {
-      Serial.println(F("DHCP failed"));
-    }
-  }
-
-  ether.printIp("IP:  ", ether.myip);
-  ether.printIp("GW:  ", ether.gwip);  
-  ether.printIp("DNS: ", ether.dnsip);  
-
-  if (!ether.dnsLookup(website)) {
-    if (SERIAL_OUTPUT) {
-      Serial.println("DNS failed");
-    }
-  }
-    
-  ether.printIp("SRV: ", ether.hisip);
+  Ethernet.begin(mymac);
+  
+#ifdef DEBUG
+  Serial.println(F("Network started.]"));
+  Serial.print(F("IP Address        : "));
+  Serial.println(Ethernet.localIP());
+  Serial.print(F("Subnet Mask       : "));
+  Serial.println(Ethernet.subnetMask());
+  Serial.print(F("Default Gateway IP: "));
+  Serial.println(Ethernet.gatewayIP());
+  Serial.print(F("DNS Server IP     : "));
+  Serial.println(Ethernet.dnsServerIP());
+#endif
 }
