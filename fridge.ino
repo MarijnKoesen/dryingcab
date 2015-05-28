@@ -86,6 +86,18 @@ static byte mymac[] = { 0x74,0x69,0x69,0x2D,0x30,0x31 };
 EthernetClient client;
 IPAddress server = IPAddress(192,168,1,3);
 
+// ========================
+// FreeMemory
+// ========================
+//
+// See http://playground.arduino.cc/Code/AvailableMemory
+#include "MemoryFree.h"
+
+
+
+// ========================
+// Application
+// ========================
 
 
 void setup () {
@@ -179,6 +191,9 @@ void loop () {
   Serial.println(logData.fridgeTemperature);
   Serial.print(F("Humidity: "));
   Serial.println(logData.humidity);  
+
+  Serial.print("freeMemory()=");
+  Serial.println(freeMemory());
 #endif
   
   // Wait for 30 seconds, and check again so that we don't turn on/off the fridge constantly
@@ -248,7 +263,8 @@ void sendLogData() {
     
     // Try to re-init our network module if it fails, next time round it should be fine again...
     // Found: http://www.tweaking4all.com/hardware/arduino/arduino-enc28j60-ethernet/
-    Enc28J60.init(mymac);
+    client.stop();
+    //Enc28J60.init(mymac);
   }
 }
 
