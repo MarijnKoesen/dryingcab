@@ -1,0 +1,7 @@
+#ifndef WIFI_CONFIG_H
+#define WIFI_CONFIG_H
+
+#define WIFI_NETWORK "TheNetworkName"
+#define WIFI_PASSWORD "Password!"
+
+#endif
