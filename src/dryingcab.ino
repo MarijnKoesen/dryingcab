@@ -1,8 +1,8 @@
 // Drying cabinet v2.0
 //
 // My arduino drying / controlled environment cabinet. This software uses
-// as Arduino Mega in combination with a DHT22, 4 way relay and an ESP8266 
-// (WiFi) adapter to created a connected fridge which keeps the temperature 
+// as Arduino Mega in combination with a DHT22, 4 way relay and an ESP8266
+// (WiFi) adapter to created a connected fridge which keeps the temperature
 // and humidity levels stable between the configured thresholds.
 //
 // IMPORTANT: 1) for this to work correctly we need proper watchdog support
@@ -225,9 +225,13 @@ void processSensorData() {
   }
 
   if (status.humidity > settings.maxHumidity) {
-    turnOn(PIN_RELAY_FAN);
+    // Currently the outside humidity is higher then inside the fridge
+    // so turning on the fan only makes it worse.
+    // TODO: add another temp/humidty sensor outside of the fridge, and only
+    // turn on the fan is the outside humidity is lower than inside
+    //turnOn(PIN_RELAY_FAN);
   } else {
-    turnOff(PIN_RELAY_FAN);
+    //turnOff(PIN_RELAY_FAN);
   }
 }
 
